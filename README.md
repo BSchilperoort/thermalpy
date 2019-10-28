@@ -15,8 +15,7 @@ Both available here: https://flir.app.boxcn.net/v/SpinnakerSDK/
 ### Installation
 Get the development version directly from GitHub
 
+::
 
-:: 
- 
     pip install https://github.com/BSchilperoort/thermalpy/zipball/master --upgrade
  
