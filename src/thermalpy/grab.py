@@ -33,10 +33,11 @@ class cams():
 
         self.cam_ids = [get_id(cam) for cam in self.cam_list]
 
-        self.camera_properties = {}
-
-        for ii, cam_id in enumerate(self.cam_ids):
-            self.camera_properties[cam_id] = get_cam_info(self.cam_list[ii])
+        ## Skip retrieving the entire nodemap for now.
+        # self.camera_properties = {}
+        #
+        # for ii, cam_id in enumerate(self.cam_ids):
+        #     self.camera_properties[cam_id] = get_cam_info(self.cam_list[ii])
 
         print('Configuring cameras...')
         for cam in self.cam_list:
