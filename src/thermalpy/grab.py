@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class cams():
+
     def __init__(self):
         # Retrieve singleton reference to system object
         self.system = PySpin.System.GetInstance()
@@ -15,6 +16,13 @@ class cams():
             self.version.minor,
             self.version.type,
             self.version.build))
+
+        if self.version.major > 1:
+            print('Warning: thermalpy is not developed for Spinnaker version {}'.
+                  format(self.version.major)+' and probably will not work')
+        elif self.version.minor > 27:
+            print('Warning: thermalpy is not tested for Spinnaker version 1.{}'.
+                  format(self.version.minor))
 
         # Retrieve list of cameras from the system
         self.cam_list = self.system.GetCameras()
@@ -30,40 +38,68 @@ class cams():
         for ii, cam_id in enumerate(self.cam_ids):
             self.camera_properties[cam_id] = get_cam_info(self.cam_list[ii])
 
+        print('Configuring cameras...')
+        for cam in self.cam_list:
+            cam.Init()
+
+            try:
+                set_Mono14(cam)
+                set_temp_linear(cam)
+                set_high_gain(cam)
+
+            except PySpin.SpinnakerException as ex:
+                print('Error: %s' % ex)
+                return False
+
+            cam.DeInit()
+            del cam
+
+
     def __repr__(self):
         return 'Placeholder repr'
+
 
     def listcams(self):
         print('Cameras currently connected:')
         [print('\t',id) for id in self.cam_ids]
 
+
     def show_images(self):
         for ii, cam in enumerate(self.cam_list):
-            image_data = grab_image(cam)
-
-            image_data = sig_to_temp(
-                            image_data,
-                (self.camera_properties[
-                        self.cam_ids[0]]['FLIR Measurement Parameters']['R'],
-                self.camera_properties[
-                        self.cam_ids[0]]['FLIR Measurement Parameters']['F'],
-                self.camera_properties[
-                        self.cam_ids[0]]['FLIR Measurement Parameters']['B'],
-                self.camera_properties[
-                        self.cam_ids[0]]['FLIR Measurement Parameters']['O'])
-                            )
+            raw_data, temps, RFBO = grab_imagedata(cam)
+            temp_data = sig_to_temp(raw_data, RFBO)
 
             plt.figure()
-            plt.imshow(image_data, cmap='inferno')
+            plt.imshow(temp_data, cmap='inferno')
             cbar = plt.colorbar()
-            cbar.set_label('*C')
+            cbar.set_label('$\\degree$C')
             plt.title('Camera '+self.cam_ids[ii])
-        del cam
+
+            del cam
+
+
+    def grab_image(self, cam_id, mode='full'):
+        for cam in self.cam_list:
+            raw_data=False
+            if get_id(cam) == cam_id:
+                raw_data, temps, RFBO = grab_imagedata(cam)
+                del cam
+
+                temperature_data = sig_to_temp(raw_data, RFBO)
+
+                if mode=='full':
+                    return temperature_data, raw_data, temps, RFBO
+                elif mode=='simple':
+                    return temperature_data
+
+            if raw_data==False:
+                print('No matching camera ID found')
+                del cam
+                return False
 
     def __del__(self):
         self.cam_list.Clear()
         self.system.ReleaseInstance()
-        del self.system
 
     def close(self):
         self.__del__()
@@ -95,32 +131,47 @@ def get_id(cam):
 
 def sig_to_temp(sig, RFBO):
     R, F, B, O = RFBO
-    return B / (np.log(R/(sig-O)+F))-273.15
+    return (B / (np.log(R/(sig-O)+F))-273.15).astype(np.float32)
 
-def grab_image(cam):
+def grab_imagedata(cam):
     try:
-        # Retrieve TL device nodemap and print device information
-        nodemap_tldevice = cam.GetTLDeviceNodeMap()
-
         # Initialize camera
         cam.Init()
 
         # Retrieve GenICam nodemap
         nodemap = cam.GetNodeMap()
 
+        # Acquire camera parameters
+        temps, RFBO = acquire_parameters(nodemap)
+
         # Acquire images
-        image_data = acquire_images(cam, nodemap, nodemap_tldevice)
+        raw_data = acquire_images(cam, nodemap)
 
         # Deinitialize camera
         cam.DeInit()
 
-        return image_data
+        return raw_data, temps, RFBO
 
     except PySpin.SpinnakerException as ex:
         print('Error: %s' % ex)
         return False
 
-def acquire_images(cam, nodemap, nodemap_tldevice):
+def acquire_parameters(nodemap):
+    node_stemp = nodemap.GetNode('SensorTemperature')
+    sensor_temp = PySpin.CFloatPtr(node_stemp).GetValue()
+    node_htemp = nodemap.GetNode('HousingTemperature')
+    housing_temp = PySpin.CFloatPtr(node_htemp).GetValue()
+    temps = {'sensor_temperature': sensor_temp,
+             'housing_temperature': housing_temp}
+
+    R = PySpin.CIntegerPtr(nodemap.GetNode('R')).GetValue()
+    F = PySpin.CFloatPtr(nodemap.GetNode('F')).GetValue()
+    B = PySpin.CFloatPtr(nodemap.GetNode('B')).GetValue()
+    O = PySpin.CFloatPtr(nodemap.GetNode('O')).GetValue()
+
+    return temps, (R, F, B, O)
+
+def acquire_images(cam, nodemap):
     """
     This function acquires and returns a single image from a device.
 
@@ -128,7 +179,6 @@ def acquire_images(cam, nodemap, nodemap_tldevice):
         ----------
         cam : PySpin cam object
         cam : PySpin Device nodemap
-        cam : PySpin Transport layer device nodemap
 
         Returns
         -------
@@ -187,6 +237,62 @@ def acquire_images(cam, nodemap, nodemap_tldevice):
 
     return image_data
 
+
+def set_Mono14(icam):
+    if icam.PixelFormat.GetAccessMode() == PySpin.RW:
+        icam.PixelFormat.SetValue(PySpin.PixelFormat_Mono14)
+        print('Pixel format set to %s...' % icam.PixelFormat.GetCurrentEntry().GetSymbolic())
+    else:
+        print('Pixel format not available...')
+
+
+def set_temp_linear(icam):
+    nodemap = icam.GetNodeMap()
+
+    node_templinmode = PySpin.CEnumerationPtr(nodemap.GetNode('TemperatureLinearMode'))
+    if not PySpin.IsAvailable(node_templinmode) or not PySpin.IsWritable(node_templinmode):
+        print('Unable to set TemperatureLinearMode (enum retrieval). Aborting...')
+        return False
+
+    # Retrieve entry node from enumeration node
+    node_templinmode_off = node_templinmode.GetEntryByName('Off')
+    if not PySpin.IsAvailable(node_templinmode_off) or not PySpin.IsReadable(
+            node_templinmode_off):
+        print('Unable to set TemperatureLinearMode (entry retrieval). Aborting...')
+        return False
+
+    # Retrieve integer value from entry node
+    linear_mode_off = node_templinmode_off.GetValue()
+
+    # Set integer value from entry node as new value of enumeration node
+    node_templinmode.SetIntValue(linear_mode_off)
+
+    return True
+
+
+def set_high_gain(icam):
+    nodemap = icam.GetNodeMap()
+
+    node_gain_mode = PySpin.CEnumerationPtr(nodemap.GetNode('SensorGainMode'))
+    if not PySpin.IsAvailable(node_gain_mode) or not PySpin.IsWritable(node_gain_mode):
+        print('Unable to set gain mode (enum retrieval). Aborting...')
+        return False
+
+    # Retrieve entry node from enumeration node
+    node_gain_mode_high = node_gain_mode.GetEntryByName('HighGainMode')
+    if (not PySpin.IsAvailable(node_gain_mode_high)
+        or not PySpin.IsReadable(node_gain_mode_high)):
+        print('Unable to set gain mode (entry retrieval). Aborting...')
+        return False
+
+    # Retrieve integer value from entry node
+    gain_mode_high = node_gain_mode_high.GetValue()
+
+    # Set integer value from entry node as new value of enumeration node
+    node_gain_mode.SetIntValue(gain_mode_high)
+
+    return True
+
 def get_cam_info(cam):
     cam.Init()
 
@@ -201,20 +307,23 @@ def get_cam_info(cam):
     return rootdict
 
 def return_node(node, nodetype):
-    if nodetype == 'string':
-        nodeval = PySpin.CStringPtr(node)
-    elif nodetype == 'integer':
-        nodeval = PySpin.CIntegerPtr(node)
-    elif nodetype == 'float':
-        nodeval = PySpin.CFloatPtr(node)
-    elif nodetype == 'bool':
-        nodeval = PySpin.CBooleanPtr(node)
-    elif nodetype == 'command':
-        nodeval = PySpin.CCategoryPtr(node)
-    elif nodetype == 'enumeration':
-        nodeval = PySpin.CEnumerationPtr(node)
+    if PySpin.IsReadable(node):
+        if nodetype == 'string':
+            nodeval = PySpin.CStringPtr(node)
+        elif nodetype == 'integer':
+            nodeval = PySpin.CIntegerPtr(node)
+        elif nodetype == 'float':
+            nodeval = PySpin.CFloatPtr(node)
+        elif nodetype == 'bool':
+            nodeval = PySpin.CBooleanPtr(node)
+        elif nodetype == 'command':
+            nodeval = PySpin.CCategoryPtr(node)
+        elif nodetype == 'enumeration':
+            nodeval = PySpin.CEnumerationPtr(node)
+        else:
+            raise ValueError("Invalid node type")
     else:
-        raise ValueError("Invalid node type")
+        nodeval = 'n/a'
 
     name = nodeval.GetDisplayName()
 
@@ -253,33 +362,27 @@ def return_category_node_and_all_features(node):
         for node_feature in node_category.GetFeatures():
             try:
                 # Ensure node is available and readable
-                if not PySpin.IsAvailable(node_feature) or not PySpin.IsReadable(node_feature):
-                    continue
+                if (PySpin.IsAvailable(node_feature) and PySpin.IsReadable(node_feature)):
+                    # Category nodes must be dealt with separately in order to retrieve subnodes recursively.
+                    if node_feature.GetPrincipalInterfaceType() == PySpin.intfICategory:
+                        name, value = return_category_node_and_all_features(node_feature)
 
-                # Category nodes must be dealt with separately in order to retrieve subnodes recursively.
-                if node_feature.GetPrincipalInterfaceType() == PySpin.intfICategory:
-                    name, value = return_category_node_and_all_features(node_feature)
+                    # Cast all non-category nodes as value nodes
+                    if node_feature.GetPrincipalInterfaceType() == PySpin.intfIString:
+                        name, value = return_node(node_feature, 'string')
+                    elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIInteger:
+                        name, value = return_node(node_feature, 'integer')
+                    elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIFloat:
+                        name, value = return_node(node_feature, 'float')
+                    elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIBoolean:
+                        name, value = return_node(node_feature, 'bool')
+                    elif node_feature.GetPrincipalInterfaceType() == PySpin.intfICommand:
+                        name, value = return_node(node_feature, 'command')
+                    elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIEnumeration:
+                        name, value = return_node(node_feature, 'enumeration')
 
-                # Cast all non-category nodes as value nodes
-                #
-                # *** NOTES ***
-                # If dealing with a variety of node types and their values, it may be
-                # simpler to cast them as value nodes rather than as their individual types.
-                # However, with this increased ease-of-use, functionality is sacrificed.
-                if node_feature.GetPrincipalInterfaceType() == PySpin.intfIString:
-                    name, value = return_node(node_feature, 'string')
-                elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIInteger:
-                    name, value = return_node(node_feature, 'integer')
-                elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIFloat:
-                    name, value = return_node(node_feature, 'float')
-                elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIBoolean:
-                    name, value = return_node(node_feature, 'bool')
-                elif node_feature.GetPrincipalInterfaceType() == PySpin.intfICommand:
-                    name, value = return_node(node_feature, 'command')
-                elif node_feature.GetPrincipalInterfaceType() == PySpin.intfIEnumeration:
-                    name, value = return_node(node_feature, 'enumeration')
+                    category_dict[name] = value
 
-                category_dict[name] = value
             except TypeError:
                 pass
 
