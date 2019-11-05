@@ -41,8 +41,8 @@ def writeappend_netcdf(directory, camera_id, image_datetime,
     if not os.path.isfile(filename):
         print('Creating new dataset...')
         ds = xr.Dataset(
-            data_vars={'temperature': (('time', 'y', 'x'),
-                                       [temperature_data]),
+            data_vars={'temperature': (('time', 'y', 'x'), [temperature_data]),
+                       'raw': (('time', 'y', 'x'), [raw_data]),
                        'sensor_temperature': ('time', [temps['sensor_temperature']]),
                        'housing_temperature': ('time', [temps['housing_temperature']]),
                        'R': ('time', [RFBO[0]]),
@@ -83,5 +83,6 @@ def writeappend_netcdf(directory, camera_id, image_datetime,
         dataset.variables['O'][ii] = (RFBO[3])
 
         dataset.variables['temperature'][ii,:,:] = temperature_data
+        dataset.variables['raw'][ii,:,:] = raw_data
 
         dataset.close()
