@@ -6,7 +6,7 @@ from netCDF4 import date2num as NetCDF4_date2num
 
 def writeappend_netcdf(directory, camera_id, image_datetime,
                        raw_data, temperature_data, temps, RFBO,
-                       freq='hourly'):
+                       freq='hourly', silent=False):
     '''
     Function that writes away the retrieved data to netcdf
 
@@ -39,7 +39,8 @@ def writeappend_netcdf(directory, camera_id, image_datetime,
     filename = directory + '\\' + 'FLIR_' + camera_id + '__' + ftime + '.nc'
 
     if not os.path.isfile(filename):
-        print('Creating new dataset...')
+        if not silent:
+            print('Creating new dataset...')
         ds = xr.Dataset(
             data_vars={'temperature': (('time', 'y', 'x'), [temperature_data]),
                        'raw': (('time', 'y', 'x'), [raw_data]),
@@ -66,7 +67,8 @@ def writeappend_netcdf(directory, camera_id, image_datetime,
         ds.to_netcdf(filename, encoding=encoding, unlimited_dims='time')
 
     else:
-        print('Appending dataset...')
+        if not silent:
+            print('Appending dataset...')
         dataset = NetCDF4_Dataset(filename, 'a')
         ii = len(dataset.variables['time'])
 

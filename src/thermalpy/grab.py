@@ -17,11 +17,13 @@ class cams():
             self.version.type,
             self.version.build))
 
-        if self.version.major > 1:
+        if self.version.major > 2:
             print('Warning: thermalpy is not developed for Spinnaker version {}'.
                   format(self.version.major)+' and probably will not work')
-        elif self.version.minor > 27:
-            print('Warning: thermalpy is not tested for Spinnaker version 1.{}'.
+        elif self.version.major == 1:
+            print('Warning: thermalpy is not developed for Spinnaker version 1.x')
+        elif self.version.minor > 2:
+            print('Warning: thermalpy is not tested for Spinnaker version 2.{}'.
                   format(self.version.minor))
 
         # Retrieve list of cameras from the system
@@ -50,7 +52,6 @@ class cams():
 
             except PySpin.SpinnakerException as ex:
                 print('Error: %s' % ex)
-                return False
 
             cam.DeInit()
             del cam
@@ -67,7 +68,7 @@ class cams():
 
     def show_images(self):
         for ii, cam in enumerate(self.cam_list):
-            raw_data, temps, RFBO = grab_imagedata(cam)
+            raw_data, _, RFBO = grab_imagedata(cam)
             temp_data = sig_to_temp(raw_data, RFBO)
 
             plt.figure()
@@ -172,7 +173,7 @@ def acquire_parameters(nodemap):
 
     return temps, (R, F, B, O)
 
-def acquire_images(cam, nodemap):
+def acquire_images(cam, nodemap, silent=False):
     """
     This function acquires and returns a single image from a device.
 
@@ -203,11 +204,13 @@ def acquire_images(cam, nodemap):
         acquisition_mode_continuous = node_acquisition_mode_continuous.GetValue()
         node_acquisition_mode.SetIntValue(acquisition_mode_continuous)
 
-        print('Acquisition mode set to continuous...')
+        if not silent:
+            print('Acquisition mode set to continuous...')
 
         cam.BeginAcquisition()
 
-        print('Acquiring images...')
+        if not silent:
+            print('Acquiring images...')
 
         try:
 
@@ -220,7 +223,8 @@ def acquire_images(cam, nodemap):
 
                 width = image_result.GetWidth()
                 height = image_result.GetHeight()
-                print('Grabbed Image, width = %d, height = %d' % (width, height))
+                if not silent:
+                    print('Grabbed Image, width = %d, height = %d' % (width, height))
 
                 image_converted = image_result.Convert(PySpin.PixelFormat_Mono14, PySpin.HQ_LINEAR)
                 image_data = np.reshape(image_converted.GetData(), (height, width))
@@ -299,7 +303,7 @@ def get_cam_info(cam):
 
     nodemap_applayer = cam.GetNodeMap()
     rootnode = nodemap_applayer.GetNode('Root')
-    rootname, rootdict = return_category_node_and_all_features(rootnode)
+    _, rootdict = return_category_node_and_all_features(rootnode)
 
     del nodemap_applayer
 
