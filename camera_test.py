@@ -20,8 +20,7 @@ output_dir = 'C:\\Data\\FLIR_2020_11_04'
 cams = thermalpy.cams()
 
 # %%
-ncams = 2
-plot_data = [0] * 2
+plot_data = [0] * cams.num_cameras
 
 for cam in cams.cam_list:
     cam.Init()
@@ -32,8 +31,11 @@ for jj, cam in enumerate(cams.cam_list):
     raw_data = \
         thermalpy.grab.acquire_images(cam, nodemap, silent=True)
 
-    temps, RFBO = thermalpy.grab.acquire_parameters(nodemap)
-    temp_data = thermalpy.grab.sig_to_temp(raw_data, RFBO)
+    if (type(raw_data) == bool) and (raw_data == False):
+        raise ValueError('Image incomplete')
+    else:
+        temps, RFBO = thermalpy.grab.acquire_parameters(nodemap)
+        temp_data = thermalpy.grab.sig_to_temp(raw_data, RFBO)
 
     del nodemap
     del cam
@@ -49,62 +51,67 @@ for cam in cams.cam_list:
     cam.Init()
     del cam
 
-fig, (ax1, ax2) = plt.subplots(ncols=2)
+if cams.num_cameras == 1:
+    fig, axes = plt.subplots()
+    axes = [axes]
+elif cams.num_cameras == 2:
+    fig, axes = plt.subplots(ncols=2)
+elif cams.num_cameras <= 4:
+    fig, axes = plt.subplots(ncols=2, nrows=2)
+    axes = axes.flatten()
+else:
+    raise ValueError('script is made for up to 4 simultaneous cameras')
 
 figManager = plt.get_current_fig_manager()
 figManager.window.showMaximized()
 
-im1 = ax1.imshow(
-    plot_data[0],
-    cmap='inferno'
-)
-im2 = ax2.imshow(
-    plot_data[1],
-    cmap='inferno'
-)
+im = [0]*cams.num_cameras
+vmin = [0]*cams.num_cameras
+vmax = [0]*cams.num_cameras
 
-ax1.set_title('ID: ' + cams.cam_ids[0])
-ax2.set_title('ID: ' + cams.cam_ids[1])
+for ii, ax in enumerate(axes):
+    im[ii] = ax.imshow(
+        plot_data[ii],
+        cmap='inferno'
+    )
 
-cax1 = make_axes_locatable(ax1).append_axes("right", size="5%", pad=0.05)
-cax2 = make_axes_locatable(ax2).append_axes("right", size="5%", pad=0.05)
+    ax.set_title('ID: ' + cams.cam_ids[ii])
 
-fig.colorbar(
-    im1,
-    cax=cax1,
-)
-fig.colorbar(
-    im2,
-    cax=cax2,
-)
+    cax = make_axes_locatable(ax).append_axes("right", size="5%", pad=0.05)
 
-ax1.axes.get_xaxis().set_visible(False)
-ax1.axes.get_yaxis().set_visible(False)
-ax2.axes.get_xaxis().set_visible(False)
-ax2.axes.get_yaxis().set_visible(False)
+    fig.colorbar(
+        im[ii],
+        cax=cax,
+    )
 
-fig.tight_layout()
-fig.subplots_adjust(
-    wspace=0.080
-)
+    ax.axes.get_xaxis().set_visible(False)
+    ax.axes.get_yaxis().set_visible(False)
 
-vmin1 = [np.percentile(plot_data[0], 1)]*10
-vmax1 = [np.percentile(plot_data[0], 99)]*10
-vmin2 = [np.percentile(plot_data[1], 1)]*10
-vmax2 = [np.percentile(plot_data[1], 99)]*10
+    fig.tight_layout()
+    fig.subplots_adjust(
+        wspace=0.080
+    )
+
+    vmin[ii] = [np.percentile(plot_data[ii], 1)]*10
+    vmax[ii] = [np.percentile(plot_data[ii], 99)]*10
 
 while True:
-    for jj, cam in enumerate(cams.cam_list):
+    for ii, cam in enumerate(cams.cam_list):
         nodemap = cam.GetNodeMap()
         raw_data = \
             thermalpy.grab.acquire_images(cam, nodemap, silent=True)
 
+        if (type(raw_data) == bool) and (raw_data == False):
+            raw_data = np.ones(np.shape(plot_data[ii])) * np.nan
+            temp_data = np.ones(np.shape(plot_data[ii])) * np.nan
+        else:
+            temp_data = thermalpy.grab.sig_to_temp(raw_data, RFBO)
+
         temps, RFBO = thermalpy.grab.acquire_parameters(nodemap)
-        temp_data = thermalpy.grab.sig_to_temp(raw_data, RFBO)
 
         thermalpy.write.writeappend_netcdf(
             directory=output_dir,
-            camera_id=cams.cam_ids[jj],
+            camera_id=cams.cam_ids[ii],
             image_datetime=datetime.now(),
             raw_data=raw_data,
             temperature_data=temp_data,
@@ -117,27 +124,19 @@ while True:
         del nodemap
         del cam
 
-        plot_data[jj] = temp_data
+        plot_data[ii] = temp_data
 
-    im1.set_data(plot_data[0])
-    im2.set_data(plot_data[1])
+    for ii in range(cams.num_cameras):
+        im[ii].set_data(plot_data[ii])
+        
+        vmin[ii].pop(0)
+        vmin[ii].append(np.percentile(plot_data[ii], 1))
+        vmax[ii].pop(0)
+        vmax[ii].append(np.percentile(plot_data[ii], 99))
 
-    vmin1.pop(0)
-    vmin1.append(np.percentile(plot_data[0], 1))
-    vmax1.pop(0)
-    vmax1.append(np.percentile(plot_data[0], 99))
-
-    vmin2.pop(0)
-    vmin2.append(np.percentile(plot_data[1], 1))
-    vmax2.pop(0)
-    vmax2.append(np.percentile(plot_data[1], 99))
-
-    im1.set_clim(
-        (np.mean(vmin1), np.mean(vmax1))
-    )
-    im2.set_clim(
-        (np.mean(vmin2), np.mean(vmax2))
-    )
+        im[ii].set_clim(
+            (np.nanmean(vmin[ii]), np.nanmean(vmax[ii]))
+        )
 
     #plt.pause(0.05)
     plt.gcf().canvas.draw_idle()

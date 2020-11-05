@@ -218,9 +218,9 @@ def acquire_images(cam, nodemap, silent=False):
 
             if image_result.IsIncomplete():
                 print('Image incomplete with image status %d ...' % image_result.GetImageStatus())
+                return False
 
             else:
-
                 width = image_result.GetWidth()
                 height = image_result.GetHeight()
                 if not silent:
